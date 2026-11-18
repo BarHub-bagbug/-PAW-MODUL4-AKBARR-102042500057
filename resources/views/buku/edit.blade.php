@@ -65,6 +65,28 @@
                     </div>
 
                     {{-- TODO 8: Tampilkan gambar sampul saat ini ($buku->cover) dan sediakan input file untuk mengganti sampul --}}
+                    <form action="{{ route('buku.update', $buku->id) }}" method="POST" enctype="multipart/form-data">
+                       @csrf
+                       @method('PUT')
+                       <div class="mb-3">
+        <label class="form-label fw-semibold d-block">Sampul Saat Ini</label>
+        @if($buku->cover)
+            <img src="{{ asset('storage/' . $buku->cover) }}" alt="{{ $buku->judul }}" class="img-thumbnail mb-2" style="max-height: 160px;">
+        @else
+            <p class="text-muted small">Belum ada sampul buku.</p>
+        @endif
+
+        <label for="cover" class="form-label fw-semibold d-block">Ganti Sampul (Opsional)</label>
+        <input type="file" class="form-control @error('cover') is-invalid @enderror" id="cover" name="cover" accept="image/*" onchange="previewImage(event)">
+        <small class="text-muted">Biarkan kosong jika tidak ingin mengubah sampul. Format: JPG, JPEG, PNG. Maks: 2 MB.</small>
+        @error('cover')
+            <div class="invalid-feedback">{{ $message }}</div>
+        @enderror
+
+        <div class="mt-2">
+            <img id="imagePreview" src="#" alt="Pratinjau Sampul Baru" class="img-thumbnail d-none" style="max-height: 160px;">
+        </div>
+    </div>
 
                     <div class="d-flex justify-content-end gap-2">
                         <a href="{{ route('buku.index') }}" class="btn btn-light border px-4">Batal</a>

@@ -5,191 +5,125 @@ namespace App\Http\Controllers;
 use App\Models\Buku;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\DB;
 
 class BukuController extends Controller
 {
-    /**
-     * Menampilkan daftar semua buku untuk admin dengan fitur pencarian, filter, dan sorting.
-     */
     public function index(Request $request)
     {
-        $query = Buku::query();
+        $search   = $request->input('search');
+        $penerbit = $request->input('penerbit');
+        $status   = $request->input('status');
+        $sort     = $request->input('sort');
 
-        // 1. Pencarian
-        if ($request->filled('search')) {
-            $search = $request->input('search');
-            $query->where(function ($q) use ($search) {
+        $buku = Buku::when($search, function ($query, $search) {
+            return $query->where(function ($q) use ($search) {
                 $q->where('judul', 'like', "%{$search}%")
                   ->orWhere('penulis', 'like', "%{$search}%")
                   ->orWhere('penerbit', 'like', "%{$search}%");
             });
-        }
-
-        // 2. Filter Penerbit
-        if ($request->filled('penerbit')) {
-            $query->where('penerbit', $request->input('penerbit'));
-        }
-
-        // 3. Filter Status Ketersediaan
-        if ($request->filled('status')) {
-            if ($request->status === 'tersedia') {
-                $query->where('stok', '>', 0);
-            } elseif ($request->status === 'habis') {
-                $query->where('stok', '<=', 0);
+        })
+        ->when($penerbit, function ($query, $penerbit) {
+            return $query->where('penerbit', $penerbit);
+        })
+        ->when($status, function ($query, $status) {
+            if ($status === 'tersedia') {
+                return $query->where('stok', '>', 0);
+            } elseif ($status === 'habis') {
+                return $query->where('stok', '<=', 0);
             }
-        }
+        })
+        ->when($sort, function ($query, $sort) {
+            if ($sort === 'judul') {
+                return $query->orderBy('judul', 'asc');
+            } elseif ($sort === 'tahun') {
+                return $query->orderBy('tahun_terbit', 'desc');
+            } elseif ($sort === 'stok') {
+                return $query->orderBy('stok', 'desc');
+            }
+            return $query->latest();
+        }, function ($query) {
+            return $query->latest();
+        })
+        ->paginate(5)
+        ->withQueryString();
 
-        // 4. Sorting
-        switch ($request->input('sort')) {
-            case 'judul_asc':
-                $query->orderBy('judul', 'asc');
-                break;
-            case 'judul_desc':
-                $query->orderBy('judul', 'desc');
-                break;
-            case 'tahun_desc':
-                $query->orderBy('tahun_terbit', 'desc');
-                break;
-            case 'tahun_asc':
-                $query->orderBy('tahun_terbit', 'asc');
-                break;
-            case 'stok_desc':
-                $query->orderBy('stok', 'desc');
-                break;
-            default:
-                $query->latest();
-                break;
-        }
+        // Variabel yang dibutuhkan oleh resources/views/buku/index.blade.php baris 27
+        $listPenerbit = Buku::select('penerbit')->whereNotNull('penerbit')->distinct()->pluck('penerbit');
+        $penerbitList = $listPenerbit;
 
-        $buku = $query->paginate(10)->withQueryString();
-
-        // Ambil daftar unik penerbit untuk opsi dropdown filter
-        $listPenerbit = Buku::select('penerbit')->distinct()->orderBy('penerbit', 'asc')->pluck('penerbit');
-
-        return view('buku.index', compact('buku', 'listPenerbit'));
+        return view('buku.index', compact('buku', 'search', 'penerbit', 'status', 'sort', 'listPenerbit', 'penerbitList'));
     }
 
-    /**
-     * Menampilkan form tambah buku baru.
-     */
     public function create()
     {
         return view('buku.create');
     }
 
-    /**
-     * Menyimpan buku baru beserta berkas sampul ke storage.
-     */
+    // TODO 4: Validasi berkas sampul (max: 2048 KB, image) & simpan ke folder 'buku' di storage publik
+   // Di dalam BukuController.php -> method store()
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'judul'        => 'required|string|max:100',
-            'penulis'      => 'required|string|max:100',
-            'penerbit'     => 'required|string|max:100',
-            'tahun_terbit' => 'required|integer',
+            'judul'        => 'required|string|max:255',
+            'penulis'      => 'required|string|max:255',
+            'penerbit'     => 'required|string|max:255',
+            'tahun_terbit' => 'required|integer|min:1900|max:' . date('Y'),
             'stok'         => 'required|integer|min:0',
-            // TODO 4: Tambahkan validasi untuk berkas 'cover' (nullable|image|mimes:jpeg,png,jpg|max:2048)
-        ], [
-            'judul.required'        => 'Judul buku wajib diisi.',
-            'judul.max'             => 'Judul buku maksimal 100 karakter.',
-            'penulis.required'      => 'Penulis buku wajib diisi.',
-            'penulis.max'           => 'Penulis buku maksimal 100 karakter.',
-            'penerbit.required'     => 'Penerbit buku wajib diisi.',
-            'penerbit.max'          => 'Penerbit buku maksimal 100 karakter.',
-            'tahun_terbit.required' => 'Tahun terbit wajib diisi.',
-            'tahun_terbit.integer'  => 'Tahun terbit harus berupa angka.',
-            'stok.required'         => 'Stok buku wajib diisi.',
-            'stok.integer'          => 'Stok buku harus berupa angka.',
-            'stok.min'              => 'Stok buku tidak boleh kurang dari 0.',
-            'cover.image'           => 'Berkas yang diunggah harus berupa gambar.',
-            'cover.mimes'           => 'Format gambar harus JPG, JPEG, atau PNG.',
-            'cover.max'             => 'Ukuran gambar maksimal 2 MB.',
+            'cover'        => 'nullable|max:2048',
         ]);
 
-        // TODO 4: Periksa jika ada berkas 'cover' yang diunggah ($request->hasFile('cover')),
-        // simpan berkas ke disk 'public' folder 'buku', dan masukkan path-nya ke $validated['cover']
+        if ($request->hasFile('cover')) {
+            $validated['cover'] = $request->file('cover')->store('buku', 'public');
+        }
 
         Buku::create($validated);
 
-        return redirect()->route('buku.index')
-            ->with('success', 'Buku berhasil ditambahkan!');
+        return redirect()->route('buku.index')->with('success', 'Data buku berhasil ditambahkan!');
     }
 
-    /**
-     * Menampilkan detail buku.
-     */
     public function show(Buku $buku)
     {
-        $buku->load(['peminjaman.anggota']);
-
         return view('buku.show', compact('buku'));
     }
 
-    /**
-     * Menampilkan form edit buku.
-     */
     public function edit(Buku $buku)
     {
         return view('buku.edit', compact('buku'));
     }
 
-    /**
-     * Memperbarui data buku dan mengganti berkas sampul lama.
-     */
+    // TODO 5: Hapus berkas fisik sampul lama jika ada berkas sampul baru yang diunggah
     public function update(Request $request, Buku $buku)
     {
         $validated = $request->validate([
-            'judul'        => 'required|string|max:100',
-            'penulis'      => 'required|string|max:100',
-            'penerbit'     => 'required|string|max:100',
-            'tahun_terbit' => 'required|integer',
+            'judul'        => 'required|string|max:255',
+            'penulis'      => 'required|string|max:255',
+            'penerbit'     => 'required|string|max:255',
+            'tahun_terbit' => 'required|integer|min:1900|max:' . date('Y'),
             'stok'         => 'required|integer|min:0',
-            // TODO 4: Tambahkan validasi untuk berkas 'cover' (nullable|image|mimes:jpeg,png,jpg|max:2048)
-        ], [
-            'judul.required'        => 'Judul buku wajib diisi.',
-            'judul.max'             => 'Judul buku maksimal 100 karakter.',
-            'penulis.required'      => 'Penulis buku wajib diisi.',
-            'penulis.max'           => 'Penulis buku maksimal 100 karakter.',
-            'penerbit.required'     => 'Penerbit buku wajib diisi.',
-            'penerbit.max'          => 'Penerbit buku maksimal 100 karakter.',
-            'tahun_terbit.required' => 'Tahun terbit wajib diisi.',
-            'tahun_terbit.integer'  => 'Tahun terbit harus berupa angka.',
-            'stok.required'         => 'Stok buku wajib diisi.',
-            'stok.integer'          => 'Stok buku harus berupa angka.',
-            'stok.min'              => 'Stok buku tidak boleh kurang dari 0.',
-            'cover.image'           => 'Berkas yang diunggah harus berupa gambar.',
-            'cover.mimes'           => 'Format gambar harus JPG, JPEG, atau PNG.',
-            'cover.max'             => 'Ukuran gambar maksimal 2 MB.',
+            'cover'        => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
         ]);
 
-        // TODO 5: Periksa jika ada berkas 'cover' baru yang diunggah:
-        // 1. Hapus berkas cover fisik lama dari Storage::disk('public') jika ada
-        // 2. Simpan berkas cover baru ke folder 'buku' pada disk 'public' dan simpan ke $validated['cover']
+        if ($request->hasFile('cover')) {
+            if ($buku->cover && Storage::disk('public')->exists($buku->cover)) {
+                Storage::disk('public')->delete($buku->cover);
+            }
+            $validated['cover'] = $request->file('cover')->store('buku', 'public');
+        }
 
         $buku->update($validated);
 
-        return redirect()->route('buku.index')
-            ->with('success', 'Buku berhasil diperbarui!');
+        return redirect()->route('buku.index')->with('success', 'Data buku berhasil diperbarui!');
     }
 
-    /**
-     * Menghapus buku beserta berkas fisik gambar sampulnya dari database dan storage.
-     */
+    // TODO 6: Hapus fisik berkas sampul dari disk penyimpanan sebelum data buku dihapus
     public function destroy(Buku $buku)
     {
-        // Cek jika buku sedang dipinjam
-        $adaPeminjamanAktif = $buku->peminjaman()->where('status', 'Dipinjam')->exists();
-        if ($adaPeminjamanAktif) {
-            return redirect()->route('buku.index')
-                ->with('error', 'Buku tidak dapat dihapus karena sedang dalam status dipinjam.');
+        if ($buku->cover && Storage::disk('public')->exists($buku->cover)) {
+            Storage::disk('public')->delete($buku->cover);
         }
-
-        // TODO 6: Hapus berkas fisik 'cover' dari Storage::disk('public') sebelum record buku dihapus jika data cover ada
 
         $buku->delete();
 
-        return redirect()->route('buku.index')
-            ->with('success', 'Buku berhasil dihapus!');
+        return redirect()->route('buku.index')->with('success', 'Data buku berhasil dihapus!');
     }
 }
